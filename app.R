@@ -428,7 +428,8 @@ server <- function(input, output, session) {
 
     # Remove plots from RenPlo for deselected datasets
     for (dataset in removed_datasets) {
-      print("Checkpoint 18b: Removing dataset", dataset)
+      print("Checkpoint 18b: Removing dataset")
+      print(dataset)
       RenPlo$data[[dataset]] <- NULL
     }
 
