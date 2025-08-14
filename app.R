@@ -231,9 +231,10 @@ server <- function(input, output, session) {
   
   # Observe when combined_data changes and update processed_datasets
   observe({
-    print("Checkpoint 6")
     new_data <- combined_data()
     req(new_data)  # Make sure it's not null
+    print("Checkpoint 6: new_data")
+    # print(new_data)
 
     processed_datasets$data <- new_data$data
     processed_datasets$groups <- new_data$groups
@@ -282,8 +283,9 @@ server <- function(input, output, session) {
   lastDataset <- reactiveValues(data = NULL)
   
   observe({
-    print("Checkpoint 10")
+    print("Checkpoint 10: lastDataset$data")
     lastDataset$data <- input$gene_expression_data
+    print(lastDataset$data)
   })
   
   observeEvent(input$cpm_or_fpkm, {
@@ -398,13 +400,15 @@ server <- function(input, output, session) {
   # II
   observeEvent(input$gene_expression_data, {
     req(input$cpm_or_fpkm)
-    print("Checkpoint 18: iput$gene_expression_data")
+    print("Checkpoint 18: input$gene_expression_data")
     selected_datasets <- input$gene_expression_data
     current_selected_genes <- selected_genes$genes  # Get currently selected genes
     previous_genes <- previous_selected_genes()  # Get previously selected genes
 
     # Identify newly selected datasets that haven't been processed yet
     new_datasets <- setdiff(selected_datasets, names(RenPlo$data))
+    print("Checkpoint 18A: new_datasets")
+    print(new_datasets)
 
     # Identify datasets that have been removed
     removed_datasets <- setdiff(names(RenPlo$data), selected_datasets)
@@ -424,6 +428,7 @@ server <- function(input, output, session) {
 
     # Remove plots from RenPlo for deselected datasets
     for (dataset in removed_datasets) {
+      print("Checkpoint 18b: Removing dataset", dataset)
       RenPlo$data[[dataset]] <- NULL
     }
 
@@ -437,7 +442,7 @@ server <- function(input, output, session) {
     print("Checkpoint 19: preprocessing_selected_genes_datasets")
     # print(selected_genes$genes)
     req(processed_datasets$data, selected_genes$genes)
-    
+    print("Cleared checkpoint 19")
     # Check if any previously processed datasets need updates due to newly selected genes
     affected_datasets <- names(RenPlo$data)
     datasets_with_new_genes <- Filter(function(dataset) {
@@ -449,7 +454,7 @@ server <- function(input, output, session) {
     datasets_to_process <- unique(c(non_processed_df_list$names, datasets_with_new_genes))
     
     datasets_to_process <- datasets_to_process[!is.na(datasets_to_process)]
-    processed_datasets$data
+    # processed_datasets$data
     
     # If nothing to process, return empty list
     #if (length(datasets_to_process) == 0) {
@@ -458,9 +463,17 @@ server <- function(input, output, session) {
     
     # These lines update the plots whether one is added or removed
     valid_datasets <- processed_datasets$data[datasets_to_process]
-    # Process everything
+    # print("Checkpoint 19A: valid_datasets")
+    # print(valid_datasets)
+    
+    # Process everything at once. Without this line, when a gene is deselected, the boxplot won't disappear
     valid_datasets <- processed_datasets$data
+    # print("Checkpoint 19B: valid_datasets")
+    # print(valid_datasets)
+    
     valid_datasets <- valid_datasets[!sapply(valid_datasets, is.null)]
+    # print("Checkpoint 19C: valid_datasets")
+    # print(valid_datasets)
     
     results_list <- future_lapply(valid_datasets, function(dataset) {
       future_lapply(selected_genes$genes, function(gene) {
@@ -480,7 +493,7 @@ server <- function(input, output, session) {
   formattedData_pri <- reactive({
     print("Checkpoint 20: formattedData_pri")
     results_list <- preprocessing_selected_genes_datasets()
-    print(results_list)
+    # print(results_list)
 
     # log_info("Line 506 results_list")
     # log_info("data in results_list Data: {paste(capture.output(print(results_list)), collapse = '\n')}")
@@ -537,7 +550,7 @@ server <- function(input, output, session) {
     )
   })
   
-  # New observeEvent block
+  # New observeEvent block. Without this, there is a glitch where choosing a second gene before the first gene finishes loading will cause the app to flicker, freeze and crash.
   # Set the default selection once after choices are ready
   observeEvent(choiceList_pri(), {
     if (is.null(input$mygene_pri) || length(input$mygene_pri) == 0) {
@@ -560,11 +573,14 @@ server <- function(input, output, session) {
     
     # There must be at least 1 selected gene to open a new dataset tab
     req(length(selected_genes$genes) > 0)
-    print("Checkpoint 26")
     # Only include datasets that are in RenPlo and not in Removed_DF
     active_datasets <- setdiff(names(RenPlo$data), Removed_DF$names)
+    print("Checkpoint 26: active_datasets")
+    print(active_datasets)
     
+    # Creates the tabs, I think?
     dataset_tabs <- lapply(active_datasets, function(dataset) {
+      print("Checkpoint 26A: creating a sub-tab, I think?")
       tabPanel(
         title = dataset,
         uiOutput(paste0("gene_plots_", gsub("[^a-zA-Z0-9]", "_", dataset)))
@@ -642,12 +658,17 @@ server <- function(input, output, session) {
       # lapply(datasets_to_process, function(dataset_name) {
       for (dataset_name in datasets_to_process) {
         print("Checkpoint 32: entered for loop")
+        # print(dataset_name)
         # ⚠️ Fix: Check if this dataset already has genes stored
         existing_genes <- names(RenPlo$data[[dataset_name]])
         new_genes <- setdiff(names(formatted_data[[dataset_name]]), existing_genes)
 
+        # It really shouldn't matter what order the dataset_names are checked in
+        # With a RETURN statement, some datasets might be skipped and the required plot(s) would not be created. In turn, the sub-tab for the new dataset would not be created.
+        # With a NEXT keyword, this ensures all datasets are checked and the required plot(s) are created. In turn, the sub-tab for the new dataset is then created.
         if (length(new_genes) == 0) {
-          return()  # Skip if no new genes
+          # print("Checkpoint 32A: No new genes! Moving on...")
+          next  # Skip if no new genes
         }
 
         print(paste("New genes detected in dataset:", dataset_name, "->", paste(new_genes, collapse = ", ")))
@@ -760,10 +781,10 @@ server <- function(input, output, session) {
   
 
   combined_HM <- reactive({
-    print("Checkpoint 41: Entered combined_HM")
     if (input$main_tabs != "Gene Expression Heatmaps") {
       return(NULL)  # Exit the reactive function if not on Heatmap tab
     }
+    print("Checkpoint 41: Entered combined_HM")
     
     clustering_method <- input$cluster_hm_method
     cluster_number <- input$number_o_clusters
