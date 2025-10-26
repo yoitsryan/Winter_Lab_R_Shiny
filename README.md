@@ -1,5 +1,5 @@
-# Winter Lab R Shiny app
-Here is an R Shiny app created by the lab of Dr. Deborah Winter at Northwestern University: a database of bulk RNA-seq data. I was tasked with debugging it. The code was highly un-annotated, making the fixes difficult. Here are the changes I made:
+# Winter Lab Bulk RNA-seq app
+This is an R Shiny app created by the lab of Dr. Deborah Winter at Northwestern University: a database of bulk RNA-seq data. I was tasked with debugging it. The code was highly un-annotated, making the fixes difficult. Here are the changes I made:
 
 ✅ Input files no longer case sensitive
 
@@ -24,3 +24,15 @@ Here is an R Shiny app created by the lab of Dr. Deborah Winter at Northwestern 
 ✅ Repaired the glitch for box plots where a sub-tab isn't always created when a new dataset is selected
 
 ✅ Eliminated the crash that happens when a dataset is selected, then deselected
+
+
+# Winter Lab Single Cell RNA-seq app
+In this app, you upload an expression matrix and an accompanying metadata file. You select one or more genes, and can view one of 5 different plot types: feature plot (UMAP), bubble plot, violin plot, heat map, box plot. You can choose metadata variables to group or split by.
+
+The most major improvement I made to this app was to convert the code, which was written in ggplot, to plotly. Other improvements include:
+
+- speeding up slow runtime
+
+- fixing multiple plot types that initially failed to run
+
+- the addition of a second heatmap to visualize pseudobulked data.
