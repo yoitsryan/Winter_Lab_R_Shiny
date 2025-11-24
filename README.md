@@ -36,3 +36,13 @@ The most major improvement I made to this app was to convert the code, which was
 - fixing multiple plot types that initially failed to run
 
 - the addition of a second heatmap to visualize pseudobulked data.
+
+Once the plots were all functional, I made more edits:
+
+- min-max scaling the expression levels represented in the heatmaps
+
+- fixing the split feature plots (bottom panel on the Feature Plot tab) so they don't become squashed or stretched
+
+- fixing the shrinking violins bug by only allowing one violin plot per row instead of two per row
+
+- swapping the axes of the bubble plots (selected genes on y-axis, group variable on x-axis), and creating one plot per split variable instead of one plot per selected gene

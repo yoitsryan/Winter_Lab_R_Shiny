@@ -56,13 +56,13 @@ ui <- fluidPage(
   sidebarLayout(
     sidebarPanel(
       radioButtons("data_type", "What type of data will be used?",
-        choices = c("User-Uploaded" = "userload",
-                    "Preloaded" ="preload"),
-        selected = "userload",
-        # inline = FALSE,
-        # width = NULL,
-        # choiceNames = NULL,
-        # choiceValues = NULL
+                   choices = c("User-Uploaded" = "userload",
+                               "Preloaded" ="preload"),
+                   selected = "userload",
+                   # inline = FALSE,
+                   # width = NULL,
+                   # choiceNames = NULL,
+                   # choiceValues = NULL
       ),
       # fileInput("expr", "1. Expression Matrix (.tsv or .tsv.gz)", accept = c(".tsv", ".tsv.gz")),
       # fileInput("meta", "2. Metadata File (.tsv or .tsv.gz)",   accept = c(".tsv", ".tsv.gz")),
@@ -103,7 +103,12 @@ ui <- fluidPage(
     ),
     mainPanel(
       tabsetPanel(
-        tabPanel("Feature Plot", withSpinner(plotlyOutput("featPlot", height = "900px"), type = 6)),
+        # tabPanel("Feature Plot", withSpinner(plotlyOutput("featPlot", height = "900px"), type = 6)),
+        # Separate the feature plot and split-plots
+        tabPanel("Feature Plot", 
+                 withSpinner(plotlyOutput("featPlot"), type = 6),
+                 uiOutput("split_plot_ui")
+        ),
         tabPanel("Bubble Plot",  plotlyOutput("dotPlot",     height = "800px")),
         tabPanel("Violin Plot",  withSpinner(uiOutput("vlnPlot_ui"), type = 6)),
         tabPanel("Heatmap",      plotlyOutput("heatmapPlot", height = "800px"), plotlyOutput("PBHeatmapPlot", height = "800px")),
@@ -117,87 +122,8 @@ ui <- fluidPage(
 
 # --- SERVER LOGIC -----------------------------------------------------------
 server <- function(input, output, session) {
-
-  # 1) Load and merge expression + metadata -------------------------------
-  # plot_data <- reactive({
-  #   req(input$expr, input$meta)
-  #   print("Checkpoint 1: plot_data")
-  #   
-  #   start_time = Sys.time()
-  #   print(input$meta$datapath)
-  #   meta_df <- read_tsv(input$meta$datapath, show_col_types = FALSE) %>%
-  #     tibble::column_to_rownames(var = colnames(.)[1])
-  #   expr_df <- read_tsv(input$expr$datapath, show_col_types = FALSE)
-  #   # meta_df <- meta_dt_full()
-  #   # expr_df <- expr_dt_full()
-  #   genes <- expr_df[[1]]
-  #   mat   <- as.matrix(expr_df[,-1]); rownames(mat) <- genes
-  #   df    <- t(mat) %>% as.data.frame() %>% tibble::rownames_to_column("cell")
-  #   end_time = Sys.time()
-  #   time_taken = end_time - start_time
-  #   print("Time it takes to plot_data")
-  #   print(time_taken)
-  #   bind_cols(df, meta_df[df$cell, , drop = FALSE])
-  #   
-  #   # library(arrow)
-  #   # library(dplyr)
-  #   # 
-  #   # start_time = Sys.time()
-  #   # print(input$meta$datapath)
-  #   # 
-  #   # # Read with Arrow - much faster for large files
-  #   # meta_df <- read_tsv_arrow(input$meta$datapath) %>%
-  #   #   tibble::column_to_rownames(var = colnames(.)[1])
-  #   # 
-  #   # expr_df <- read_tsv_arrow(input$expr$datapath)
-  #   # 
-  #   # # Alternative: If files are very large, you can use Arrow's streaming reader
-  #   # # meta_df <- arrow::open_dataset(input$meta$datapath, format = "tsv") %>%
-  #   # #   collect() %>%
-  #   # #   tibble::column_to_rownames(var = colnames(.)[1])
-  #   # # 
-  #   # # expr_df <- arrow::open_dataset(input$expr$datapath, format = "tsv") %>%
-  #   # #   collect()
-  #   # 
-  #   # # browser()
-  #   # 
-  #   # genes <- expr_df[[1]]
-  #   # mat <- as.matrix(expr_df[,-1])
-  #   # rownames(mat) <- genes
-  #   # 
-  #   # df <- t(mat) %>% 
-  #   #   as.data.frame() %>% 
-  #   #   tibble::rownames_to_column("cell")
-  #   # 
-  #   # end_time = Sys.time()
-  #   # time_taken = end_time - start_time
-  #   # print("Time it takes to plot_data")
-  #   # print(time_taken)
-  #   # 
-  #   # bind_cols(df, meta_df[df$cell, , drop = FALSE])
-  # })
-  # 
-  # expr_dt_full <- reactive({
-  #   req(input$expr)
-  #   print("Checkpoint 2: expr_dt_full")
-  #   # Only need to fread once. Not again in plot_data!
-  #   dt <- fread(input$expr$datapath, encoding = "UTF-8")
-  #   print(dim(dt))
-  #   setnames(dt, names(dt)[1], "gene")
-  #   dt[, gene := toupper(trimws(gene))]
-  #   dt
-  # })
-  # 
-  # meta_dt_full <- reactive({
-  #   req(input$meta)
-  #   print("Checkpoint 3: meta_dt_full")
-  #   # Only need to fread once. Not again in plot_data!
-  #   dt <- fread(input$meta$datapath)
-  #   setnames(dt, names(dt)[1], "cell")
-  #   dt[, cell := trimws(as.character(cell))]
-  #   dt
-  # })
   
+  # 1) Load and merge expression + metadata -------------------------------
   plot_data <- reactive({
     # Instead of using as.matrix (which is slow), use data.table (which is way faster)!
     req(input$expr, input$meta)
@@ -293,20 +219,20 @@ server <- function(input, output, session) {
       # Extract pseudobulk matrix and transpose
       pb_mat <- t(pb$RNA)
       
-      # Debug: Check what Seurat returned
-      cat("Raw Seurat output - pb$RNA dimensions:", nrow(pb$RNA), "x", ncol(pb$RNA), "\n")
-      cat("Raw Seurat output - pb$RNA rownames:", paste(head(rownames(pb$RNA)), collapse = ", "), "\n")
-      cat("Raw Seurat output - pb$RNA colnames:", paste(head(colnames(pb$RNA)), collapse = ", "), "\n")
-      
-      # Ensure gene names are preserved
-      cat("After transpose - Gene names preserved:", length(colnames(pb_mat)), "genes\n")
-      cat("After transpose - Sample gene names:", paste(head(colnames(pb_mat)), collapse = ", "), "\n")
-      
-      # Ensure group names are preserved
-      cat("After transpose - Group names preserved:", length(rownames(pb_mat)), "groups\n")
-      cat("After transpose - Group names:", paste(rownames(pb_mat), collapse = ", "), "\n")
-      
-      cat("Pseudobulk matrix:", nrow(pb_mat), "groups x", ncol(pb_mat), "genes\n")
+      # # Debug: Check what Seurat returned
+      # cat("Raw Seurat output - pb$RNA dimensions:", nrow(pb$RNA), "x", ncol(pb$RNA), "\n")
+      # cat("Raw Seurat output - pb$RNA rownames:", paste(head(rownames(pb$RNA)), collapse = ", "), "\n")
+      # cat("Raw Seurat output - pb$RNA colnames:", paste(head(colnames(pb$RNA)), collapse = ", "), "\n")
+      # 
+      # # Ensure gene names are preserved
+      # cat("After transpose - Gene names preserved:", length(colnames(pb_mat)), "genes\n")
+      # cat("After transpose - Sample gene names:", paste(head(colnames(pb_mat)), collapse = ", "), "\n")
+      # 
+      # # Ensure group names are preserved
+      # cat("After transpose - Group names preserved:", length(rownames(pb_mat)), "groups\n")
+      # cat("After transpose - Group names:", paste(rownames(pb_mat), collapse = ", "), "\n")
+      # 
+      # cat("Pseudobulk matrix:", nrow(pb_mat), "groups x", ncol(pb_mat), "genes\n")
       
     } else {
       cat("No grouping variable available. Creating individual cell heatmap.\n")
@@ -338,6 +264,8 @@ server <- function(input, output, session) {
       cat("Individual cell matrix:", nrow(pb_mat), "cells x", ncol(pb_mat), "genes\n")
     }
     
+    # print("pb_mat")
+    # print(pb_mat)
     pb_mat
   })
   
@@ -366,7 +294,7 @@ server <- function(input, output, session) {
     setkey(meta_dt, cell)
     meta_dt
   })
-
+  
   # 2) Dynamic UI for gene, group, split ----------------------------------
   output$gene_ui <- renderUI({
     req(expr_dt_full())
@@ -378,7 +306,7 @@ server <- function(input, output, session) {
                    multiple = TRUE,
                    options = list(placeholder = "Type to search...", maxOptions = 100))
   })
-
+  
   observeEvent(expr_dt_full(), {
     print("Checkpoint 5: observeEvent expr_dt_full")
     updateSelectizeInput(session, "genes",
@@ -386,7 +314,7 @@ server <- function(input, output, session) {
                          selected = NULL,
                          server = TRUE)
   })
-
+  
   output$group_ui <- renderUI({
     req(meta_dt_full())
     print("Checkpoint 6: output$group_ui")
@@ -395,7 +323,6 @@ server <- function(input, output, session) {
     # Remove UMAP_Xaxis and UMAP_Yaxis from meta_cols
     meta_cols <- setdiff(meta_cols, c("UMAP_Xaxis", "UMAP_Yaxis"))
     
-    
     selectInput("group", "Group By (Categories/Colors):",
                 choices  = meta_cols,
                 selected = meta_cols[1])
@@ -403,12 +330,12 @@ server <- function(input, output, session) {
   output$split_ui <- renderUI({
     req(meta_dt_full())
     print("Checkpoint 7: output$split_ui")
-    meta_cols <- setdiff(names(meta_dt_full()), "cell")
+    meta_cols <- setdiff(names(meta_dt_full()), c("cell", "UMAP_Xaxis", "UMAP_Yaxis"))
     selectInput("split", "Split By (Rows/Panels):",
                 choices  = c("None", meta_cols),
                 selected = "None")
   })
-
+  
   # === FEATURE PLOT SECTION START (RESTRUCTURED FOR DOWNLOADS) ===
   
   # --- NEW: Reactive ggplot object for sharing ---
@@ -506,6 +433,7 @@ server <- function(input, output, session) {
     # --------------------------
     # Bottom panel: split-feature UMAP
     # --------------------------
+    split_plotly <- NULL
     if (!is.null(input$genes) && length(input$genes) > 0 && input$split != "None") {
       df_long <- df %>%
         select(UMAP_Xaxis, UMAP_Yaxis, cell, all_of(group_col), all_of(split_col), all_of(input$genes)) %>%
@@ -549,19 +477,18 @@ server <- function(input, output, session) {
       # --------------------------
       for (g in facet_cols) {
         # If g was named "gene", bg_points and fg_points will not separate the dots by gene across plots. Don't make the iterating variable name the same as the column name that's being subsetted.
-        print("gene")
         print(g)
         row_subplots <- list()
         for (split_val in facet_rows) {
           print("split_val")
-          print(split_val)
+          # print(split_val)
           # bg_points = background “all cells” layer in light grey
           # fg_points = foreground “expressing cells” layer in color
           bg_points <- df_bg %>% filter(gene == g, .data[[split_col]] == split_val)
           fg_points <- df_long %>% filter(gene == g, .data[[split_col]] == split_val, expression > 0)
           
           print("fg_points")
-          print(fg_points)
+          # print(fg_points)
           traces <- list()
           
           # This code creates an extra subplot that isn't needed
@@ -601,7 +528,8 @@ server <- function(input, output, session) {
               ),
               text = ~hover_text_split,
               hoverinfo = "text",
-              showlegend = FALSE
+              showlegend = FALSE,
+              scaleratio = 1
             )
           }
           
@@ -623,7 +551,18 @@ server <- function(input, output, session) {
       
       valid_cols <- split_subplots[!sapply(split_subplots, is.null)]
       if (length(valid_cols) > 0) {
-        split_plotly <- subplot(valid_cols, nrows = 1, shareX = FALSE, shareY = FALSE)
+        # split_plotly <- subplot(valid_cols, nrows = 1, shareX = FALSE, shareY = FALSE)
+        
+        # Keep the plots as square as possible (not squished)
+        base_size <- 250
+        split_plotly <- subplot(valid_cols, nrows = 1) %>%
+          layout(
+            autosize = FALSE,
+            width  = base_size * length(facet_cols),
+            height = base_size * length(facet_rows),
+            xaxis = list(scaleanchor = "y"),
+            yaxis = list(constrain = "domain", scaleratio = 1)
+          )
         
         # --------------------------
         # Add facet labels
@@ -687,47 +626,73 @@ server <- function(input, output, session) {
     time_taken = end_time - start_time
     print("Feature plot time")
     print(time_taken)
-    return(combined_plot)
+    
+    # The feature plot and split-plots are separate elements now.
+    return(list(meta_plotly, split_plotly))
   })
   
   # Render the plotly object for the UI
   output$featPlot <- renderPlotly({
-      plot_gg <- feature_plotly_object()
-      print("Checkpoint 16: plot_gg")
-      req(plot_gg)
-      ggplotly(plot_gg, tooltip = "text")
-      # ggplotly(plot_gg)
-      # return(plot_gg)
+    plot_gg <- feature_plotly_object()[[1]]
+    print("Checkpoint 16: output$featPlot")
+    req(plot_gg)
+    ggplotly(plot_gg, tooltip = "text")
+    # ggplotly(plot_gg)
+    # return(plot_gg)
+  })
+  
+  output$splitPlot <- renderPlotly({
+    req(input$split)
+    plot_gg <- feature_plotly_object()[[2]]
+    print("Checkpoint 16A: output$splitPlot")
+    req(plot_gg)
+    ggplotly(plot_gg, tooltip = "text")
+    # ggplotly(plot_gg)
+    # return(plot_gg)
+  })
+  
+  # Dynamically change the size of the panel based on how many split plots are made.
+  # We don't want the plots to get "squished" horizontally.
+  output$split_plot_ui <- renderUI({
+    req(input$split) # this menu won't even appear until expression matrix and metadata are selected
+    n_pixels_per_plot <- 200
+    withSpinner(plotlyOutput("splitPlot", height = n_unique_splits() * n_pixels_per_plot), type = 6)    
+  })
+  
+  
+  # Calculate the number of rows in the bottom panel of the feature plot (split plots)
+  n_unique_splits <- reactive({
+    length(unique(plot_data()[[input$split]]))
   })
   
   # --- NEW: Download Handlers ---
-  output$downloadPng <- downloadHandler(
-    filename = function() {
-      paste0("feature_plot_", Sys.Date(), ".png")
-    },
-    content = function(file) {
-      plot_to_save <- feature_plot_object()
-      req(plot_to_save)
-      # Use ggsave for high-quality export. Adjust dimensions as needed.
-      ggsave(file, plot = plot_to_save, device = "png", width = 10, height = 12, dpi = 300, units = "in")
-    }
-  )
-  
-  output$downloadHtml <- downloadHandler(
-    filename = function() {
-      paste0("feature_plot_", Sys.Date(), ".html")
-    },
-    content = function(file) {
-      plot_gg <- feature_plot_object()
-      req(plot_gg)
-      # Convert to plotly and then save as a self-contained HTML file
-      plot_ly <- ggplotly(plot_gg, tooltip = "text")
-      saveWidget(widget = plot_ly, file = file, selfcontained = TRUE)
-    }
-  )
+  # output$downloadPng <- downloadHandler(
+  #   filename = function() {
+  #     paste0("feature_plot_", Sys.Date(), ".png")
+  #   },
+  #   content = function(file) {
+  #     plot_to_save <- feature_plot_object()
+  #     req(plot_to_save)
+  #     # Use ggsave for high-quality export. Adjust dimensions as needed.
+  #     ggsave(file, plot = plot_to_save, device = "png", width = 10, height = 12, dpi = 300, units = "in")
+  #   }
+  # )
+  # 
+  # output$downloadHtml <- downloadHandler(
+  #   filename = function() {
+  #     paste0("feature_plot_", Sys.Date(), ".html")
+  #   },
+  #   content = function(file) {
+  #     plot_gg <- feature_plot_object()
+  #     req(plot_gg)
+  #     # Convert to plotly and then save as a self-contained HTML file
+  #     plot_ly <- ggplotly(plot_gg, tooltip = "text")
+  #     saveWidget(widget = plot_ly, file = file, selfcontained = TRUE)
+  #   }
+  # )
   
   # === FEATURE PLOT SECTION END ===
-
+  
   # === BUBBLE PLOT SECTION START ===
   
   output$dotPlot <- renderPlotly({
@@ -793,14 +758,14 @@ server <- function(input, output, session) {
     genes <- unique(summary_df$gene)
     n_genes <- length(genes)
     annotations <- list()
-    n_cols = 2
+    n_cols = 1
     
     if (is.null(split_var)) {
       # No split_var included
       subplots[[1]] <- plot_ly(
         data = summary_df,
-        x = ~gene, # genes on x-axis
-        y = ~.data[[group_var]], # group_var on y-axis
+        x = ~.data[[group_var]], # group_var on x-axis
+        y = ~gene, # genes on y-axis
         size = ~pct_expr,
         color = ~avg_expr,
         text = ~hover_text,
@@ -818,13 +783,13 @@ server <- function(input, output, session) {
         colors = viridis::viridis_pal()(100)
       ) %>%
         layout(
-          xaxis = list(title = "Gene", tickangle = 45),
-          yaxis = list(title = input$group)
+          xaxis = list(title = input$group),
+          yaxis = list(title = "Gene")
         )
     } else {
       # split_var included
       list_of_dfs <- as.data.table(summary_df) %>%
-        split(by = "gene") # one graph for every gene
+        split(by = split_var) # one graph for every split variable
       
       print("group_var")
       print(group_var)
@@ -834,8 +799,10 @@ server <- function(input, output, session) {
       for (i in seq_along(list_of_dfs)) {
         subplots[[i]] <- plot_ly(
           data = list_of_dfs[[i]],
-          x = ~.data[[split_var]], # put the split_var on the x-axis
-          y = ~.data[[group_var]], # put the group_var on the y-axis
+          # x = ~.data[[split_var]], # put the split_var on the x-axis
+          # y = ~.data[[group_var]], # put the group_var on the y-axis
+          x = ~.data[[group_var]], # put the group_var on the x-axis
+          y = ~gene, # put the genes on the y-axis
           size = ~pct_expr,
           color = ~avg_expr,
           text = ~hover_text,
@@ -854,8 +821,8 @@ server <- function(input, output, session) {
           text = genes[i],
           xref = "paper",
           yref = "paper",
-          xanchor = "center",  
-          yanchor = "bottom",  
+          xanchor = "center",
+          yanchor = "bottom",
           showarrow = FALSE
         )
       }
@@ -880,8 +847,9 @@ server <- function(input, output, session) {
       combined_plot <- subplots[[1]]
     }
   })
+  
   # === BUBBLE PLOT SECTION END ===
-
+  
   # === VIOLIN PLOT SECTION START (Enhanced) ===
   
   # Helper function for better colors
@@ -900,12 +868,13 @@ server <- function(input, output, session) {
     req(input$genes)
     print("Checkpoint 19: output$vlnPlot_ui")
     n    <- length(input$genes)
-    cols <- if (n <= 2) n else 2
+    # cols <- if (n <= 2) n else 2
+    cols <- 1
     rows <- ceiling(n/cols)
     height_px <- paste0(400*rows, "px")
     plotlyOutput("vlnPlot", height = height_px, width = "100%")
   })
-
+  
   violinPlot_data = reactive({
     req(input$genes, input$group, expr_dt_full(), meta_dt_full())
     start_time = Sys.time()
@@ -989,17 +958,27 @@ server <- function(input, output, session) {
   
   output$vlnPlot <- renderPlotly({
     df_big = violinPlot_data()
+    print("df_big")
+    print(df_big)
     start_time = Sys.time()
     # Build plot
     genes <- unique(df_big$gene)
+    print("genes")
+    print(genes)
     n_genes <- length(genes)
     
     # Create subplots
     subplots <- list()
     annotations <- list()
-    n_cols <- 2
+    # n_cols <- 2
+    n_cols <- 1
     for (i in seq_along(genes)) {
+      print(paste0("genes[", i, "]"))
+      print(genes[i])
       gene_data <- df_big[df_big$gene == genes[i], ]
+      print("gene_data")
+      print(gene_data)
+      # browser()
       
       if (input$split != "None" && nzchar(input$split)) {
         # With split column
@@ -1007,8 +986,9 @@ server <- function(input, output, session) {
         p <- plot_ly(data = gene_data, showlegend = (i == 1)) %>%
           add_trace(
             x = ~group, y = ~expression, color = ~split,
-            type = "violin", 
+            type = "violin",
             split = ~split,
+            # width = 0.8,
             box = list(visible = TRUE),
             meanline = list(visible = TRUE),
             # fillcolor = ~split,
@@ -1025,15 +1005,16 @@ server <- function(input, output, session) {
             yaxis = list(title = if(i == 1) "Normalized Expression" else ""),
             margin = list(l = 50, r = 20, t = 40, b = 50)
           )
-          # %>%
-          # add_trace(
-          #   x = ~group, y = ~expression, color = ~split,
-          #   type = "scatter", mode = "markers",
-          #   marker = list(size = 3, opacity = 0.6),
-          #   text = ~tooltip_text,
-          #   hovertemplate = "%{text}<extra></extra>",
-          #   showlegend = FALSE
-          # )
+        
+        # %>%
+        # add_trace(
+        #   x = ~group, y = ~expression, color = ~split,
+        #   type = "scatter", mode = "markers",
+        #   marker = list(size = 3, opacity = 0.6),
+        #   text = ~tooltip_text,
+        #   hovertemplate = "%{text}<extra></extra>",
+        #   showlegend = FALSE
+        # )
       } else {
         # Without split column
         p <- plot_ly(data = gene_data, showlegend = (i == 1)) %>%
@@ -1059,7 +1040,8 @@ server <- function(input, output, session) {
       
       subplots[[i]] <- p
       annotations[[i]] <- list(
-        x = ifelse(i %% 2 == 0, 0.8, 0.2),
+        # x = ifelse(i %% 2 == 0, 0.8, 0.2),
+        x = 0.5,
         y = get_y_coords_auto(i, n_cols, n_genes),
         text = genes[i],
         xref = "paper",
@@ -1088,138 +1070,14 @@ server <- function(input, output, session) {
     return(final_plot)
   })
   # === VIOLIN PLOT SECTION END ===
-
+  
   # === HEATMAP SECTION START ===
-  # output$heatmapPlot <- renderPlotly({
-  #   req(input$genes, input$group, plot_data())
-  #   start_time = Sys.time()
-  #   print("Checkpoint 21: output$heatmapPlot")
-  #   df <- plot_data()
-  # 
-  #   # if (input$split != "None") {
-  #   #   print("Checkpoint 22: input$split is not None")
-  #   #   grp <- paste(df[[input$group]], df[[input$split]], sep = "_")
-  #   # } else {
-  #   #   print("Checkpoint 23: input$split is None")
-  #   #   grp <- df[[input$group]]
-  #   # }
-  # 
-  #   grp <- df[[input$group]]
-  # 
-  #   # if (input$group)
-  # 
-  #   mat <- as.matrix(df[input$genes])
-  # 
-  #   # Display one line for every cell if no group-by variable is selected. Otherwise, group by variable and take the average per group
-  #   # if (input$group != "None"){
-  #   #   avg_mat <- t(rowsum(mat, grp) / as.vector(table(grp)))
-  #   # } else {
-  #   #   avg_mat <- t(mat)
-  #   # }
-  # 
-  #   # Want to keep all cells in the matrix
-  #   # If a group-by variable is selected, then group the cells by that variable
-  #   if (input$group != "None") {
-  #     # grouping variable for each cell
-  #     grp <- df[[input$group]]
-  #     ord <- order(grp)
-  # 
-  #     # reorder the cells by group
-  #     mat <- mat[ord, , drop = FALSE]
-  #     grp_ordered <- grp[ord]
-  # 
-  #     avg_mat <- t(mat)
-  # 
-  #     # compute tick positions (center of each group) and group labels
-  #     group_levels <- unique(grp_ordered)
-  #     group_positions <- sapply(group_levels, function(g) mean(which(grp_ordered == g)))
-  # 
-  #     # compute boundaries for optional vertical lines between groups
-  #     group_bounds <- cumsum(table(grp_ordered))
-  #   } else {
-  #     avg_mat <- t(mat)
-  #     grp_ordered <- NULL
-  #   }
-  # 
-  #   mat_z <- t(scale(t(avg_mat))) # this is the code to normalize (standardize)
-  #   mat_z[is.na(mat_z)] <- 0
-  # 
-  #   # print("mat_z")
-  #   # print(mat_z)
-  # 
-  #   end_time = Sys.time()
-  #   time_taken = end_time - start_time
-  #   print("Heatmap time")
-  #   print(time_taken)
-  # 
-  #   # plot_ly(
-  #   #   x = colnames(mat_z),
-  #   #   y = rownames(mat_z),
-  #   #   z = mat_z,
-  #   #   type = "heatmap",
-  #   #   # colors = colorRamp(c("#440154", "white", "#21918c")),
-  #   #   colors = colorRamp(c("violet", "black", "yellow")),
-  #   #   showscale = TRUE
-  #   # ) %>%
-  #   #   layout(
-  #   #     title = list(
-  #   #       text = "Expression Heatmap<br><sub>Each group = CellType_DiseaseStatus</sub>",
-  #   #       x = 0.5,
-  #   #       xanchor = "center"
-  #   #     ),
-  #   #     xaxis = list(title = "Group", tickangle = 45),
-  #   #     yaxis = list(title = "Gene"),
-  #   #     margin = list(l = 80, r = 20, b = 100, t = 80)
-  #   #   )
-  # 
-  #   p <- plot_ly(
-  #     x = colnames(avg_mat),
-  #     y = rownames(avg_mat),
-  #     z = mat_z,  # your normalization step
-  #     type = "heatmap",
-  #     colors = colorRamp(c("violet", "black", "yellow")),
-  #     showscale = TRUE
-  #   )
-  # 
-  #   # only adjust layout if a group is selected
-  #   if (input$group != "None") {
-  #     p <- p %>% layout(
-  #       title = list(
-  #         text = "Expression Heatmap<br><sub>Cells grouped by variable</sub>",
-  #         x = 0.5, xanchor = "center"
-  #       ),
-  #       xaxis = list(
-  #         title = input$group,
-  #         tickangle = 45,
-  #         tickvals = group_positions,
-  #         ticktext = group_levels
-  #       ),
-  #       yaxis = list(title = "Gene"),
-  #       margin = list(l = 80, r = 20, b = 100, t = 80),
-  #       shapes = lapply(head(group_bounds, -1), function(pos) {
-  #         list(
-  #           type = "line",
-  #           x0 = pos + 0.5, x1 = pos + 0.5,
-  #           y0 = 0, y1 = 1,
-  #           xref = "x", yref = "paper",
-  #           line = list(color = "white", width = 1)
-  #         )
-  #       })
-  #     )
-  #   } else {
-  #     p <- p %>% layout(
-  #       title = list(
-  #         text = "Expression Heatmap",
-  #         x = 0.5, xanchor = "center"
-  #       ),
-  #       xaxis = list(title = "Cell", tickangle = 45),
-  #       yaxis = list(title = "Gene"),
-  #       margin = list(l = 80, r = 20, b = 100, t = 80)
-  #     )
-  #   }
-  # 
-  #   p
-  # })
+  min_max_normalization <- function(x, min_value = -1, max_value = 1) {
+    min_x <- min(x)
+    max_x <- max(x)
+    normalized_x <- (x - min_x) / (max_x - min_x) * (max_value - min_value) + min_value
+    return(normalized_x)
+  }
   
   output$heatmapPlot <- renderPlotly({
     req(input$genes, input$group, plot_data())
@@ -1256,15 +1114,21 @@ server <- function(input, output, session) {
     mat_z <- t(scale(t(avg_mat)))
     mat_z[is.na(mat_z)] <- 0
     
-    print(max(mat_z))
-    print(min(mat_z))
+    # Min-max scale the heatmap rows
+    normalized_data <- apply(mat_z, 1, min_max_normalization, min_value = -1, max_value = 1)
+    print("Normalized data")
+    norm_mat_z = t(normalized_data)
+    # print(norm_mat_z)
+    
+    # print(max(mat_z))
+    # print(min(mat_z))
     # print(pseudobulk_data())
     
     # Base heatmap
     p <- plot_ly(
-      x = colnames(mat_z),
-      y = rownames(mat_z),
-      z = mat_z,  # <- don't transpose here
+      x = colnames(norm_mat_z),
+      y = rownames(norm_mat_z),
+      z = norm_mat_z,  # <- don't transpose here
       type = "heatmap",
       colors = colorRamp(c("violet", "black", "yellow")),
       showscale = TRUE
@@ -1288,6 +1152,7 @@ server <- function(input, output, session) {
       })
       
       # Add text labels centered under each bar
+      # Add text labels centered under each bar, rotated diagonally
       group_labels <- lapply(seq_along(group_levels), function(i) {
         list(
           x = mean(c(group_starts[i], group_ends[i])),
@@ -1295,7 +1160,10 @@ server <- function(input, output, session) {
           xref = "x", yref = "paper",
           text = group_levels[i],
           showarrow = FALSE,
-          font = list(size = 12)
+          font = list(size = 12),
+          textangle = 45,   # ← Rotate text diagonally
+          xanchor = "center",
+          yanchor = "top"
         )
       })
       
@@ -1332,6 +1200,7 @@ server <- function(input, output, session) {
     pb_mat = pseudobulk_data()
     selected_genes <- input$genes
     available_genes <- intersect(selected_genes, colnames(pb_mat))
+    group_by_var = input$group
     
     # Subset matrix for selected genes
     heatmap_data <- pb_mat[, available_genes, drop = FALSE]
@@ -1416,7 +1285,7 @@ server <- function(input, output, session) {
         type = "heatmap",
         colors = colorRamp(c("violet", "black", "yellow")),
         showscale = TRUE,
-        colorbar = list(title = "Avg Expression"),
+        colorbar = list(title = "Expression"),
         hovertemplate = paste(
           "<b>Group:</b> %{y}<br>",
           "<b>Gene:</b> %{x}<br>",
@@ -1431,12 +1300,12 @@ server <- function(input, output, session) {
             xanchor = "center"
           ),
           xaxis = list(
-            title = "Genes",
+            title = "Groups",
             tickangle = 45,
             showgrid = FALSE
           ),
           yaxis = list(
-            title = "Groups",
+            title = "Genes",
             showgrid = FALSE
           ),
           margin = list(l = 80, r = 20, b = 100, t = 80)
@@ -1444,7 +1313,7 @@ server <- function(input, output, session) {
     }
   })
   # === HEATMAP SECTION END ===
-
+  
   # === BOX PLOT SECTION START ===
   # Need to change the height of the boxPlot plotOutput based on how many genes are selected
   output$boxPlotUI <- renderUI({
@@ -1455,14 +1324,33 @@ server <- function(input, output, session) {
     plotlyOutput("boxPlot", height = paste0(500 * nrows, "px"))
   })
   
+  # This box plots takes pseudobulked data instead of the plot data
   output$boxPlot <- renderPlotly({
-    req(input$genes, input$group, plot_data())
+    req(input$genes, input$group, pseudobulk_data())
+    print("plot_data class")
+    print(class(plot_data()))
+    print(plot_data())
+    print("pseudobulk_data class")
+    print(class(pseudobulk_data()))
+    # print("pseudobulk data")
+    # print(pseudobulk_data())
+    
+    pseudobulk_df <- as.data.frame(pseudobulk_data())
+    
+    print("pseudobulk as data frame")
+    print(class(pseudobulk_df))
+    print(pseudobulk_df)
+    
     start_time = Sys.time()
     # For this boxplot, we need to pseudobulk the data first.
     # For pseudobulking there is a seurat function that does this well or you can make your own. Essentially it takes the individual cell ID columns form the expression matrix and the cell IDs as rows from the metadata file and averages the counts per biological replicate sample
     
-    df <- plot_data() %>%
+    df <- pseudobulk_df %>%
       pivot_longer(cols = all_of(input$genes), names_to="gene", values_to="expr")
+    
+    print("new df")
+    
+    print(df)
     
     df$hover_text <- paste0(
       "Gene: ", df$gene, "<br>",
