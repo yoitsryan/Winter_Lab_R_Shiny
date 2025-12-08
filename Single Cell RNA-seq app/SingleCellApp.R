@@ -109,7 +109,7 @@ ui <- fluidPage(
                  withSpinner(plotlyOutput("featPlot"), type = 6),
                  uiOutput("split_plot_ui")
         ),
-        tabPanel("Bubble Plot",  plotlyOutput("dotPlot",     height = "800px")),
+        tabPanel("Bubble Plot",  withSpinner(uiOutput("dotPlot_ui"), type = 6)),
         tabPanel("Violin Plot",  withSpinner(uiOutput("vlnPlot_ui"), type = 6)),
         tabPanel("Heatmap",      plotlyOutput("heatmapPlot", height = "800px"), plotlyOutput("PBHeatmapPlot", height = "800px")),
         # tabPanel("Box Plot",     plotOutput("boxPlot",     height = "800px"))
@@ -694,16 +694,23 @@ server <- function(input, output, session) {
   # === FEATURE PLOT SECTION END ===
   
   # === BUBBLE PLOT SECTION START ===
-  
-  output$dotPlot <- renderPlotly({
-    # if (input$split == "None" & !is.null(group_var)){
-    #   split_var = group_var
-    # }
+  output$dotPlot_ui <- renderUI({
     
+    if (is.null(input$split)) {
+      n <- 1
+    } else {
+      n <- length(unique(dotPlot_data_prep()[[input$split]]))
+    }
+    
+    cols <- 1
+    rows <- ceiling(n/cols)
+    
+    height_px <- paste0(400*rows, "px")
+    plotlyOutput("dotPlot", height = height_px, width = "100%")
+  })
+  
+  dotPlot_data_prep = reactive({
     print("Approaching Checkpoint 17")
-    req(input$genes, input$group, plot_data())
-    start_time = Sys.time()
-    # req(input$split != "None")
     print("Checkpoint 17: output$dotPlot")
     df <- plot_data()
     
@@ -740,6 +747,20 @@ server <- function(input, output, session) {
     print("summary_df")
     print(summary_df)
     
+    return(summary_df)
+  })
+  
+  output$dotPlot <- renderPlotly({
+    # if (input$split == "None" & !is.null(group_var)){
+    #   split_var = group_var
+    # }
+    req(input$genes, input$group, plot_data())
+    split_var <- if (input$split != "None") input$split else NULL
+    group_var <- input$group
+    
+    start_time = Sys.time()
+    # req(input$split != "None")
+    summary_df = dotPlot_data_prep()
     # Hover text
     summary_df$hover_text <- paste0(
       "Gene: ", summary_df$gene, "<br>",
@@ -788,14 +809,22 @@ server <- function(input, output, session) {
         )
     } else {
       # split_var included
+      
+      # Find the minimum and maximum avg_expr in the summary_df
+      # to set the limits of the color bar legend.
+      min_max <- range(summary_df$avg_expr)
+      
       list_of_dfs <- as.data.table(summary_df) %>%
         split(by = split_var) # one graph for every split variable
       
-      print("group_var")
-      print(group_var)
-      print("list_of_dfs")
-      print(list_of_dfs)
+      # This is for the plot labels
+      n_split = length(list_of_dfs)
       
+      # print("group_var")
+      # print(group_var)
+      # print("list_of_dfs")
+      # print(list_of_dfs)
+      # browser()
       for (i in seq_along(list_of_dfs)) {
         subplots[[i]] <- plot_ly(
           data = list_of_dfs[[i]],
@@ -804,21 +833,29 @@ server <- function(input, output, session) {
           x = ~.data[[group_var]], # put the group_var on the x-axis
           y = ~gene, # put the genes on the y-axis
           size = ~pct_expr,
-          color = ~avg_expr,
+          # color = ~avg_expr,
           text = ~hover_text,
           hoverinfo = "text",
           type = "scatter",
-          mode = "markers"
+          mode = 'markers',
+          marker = list(
+            color = ~avg_expr,
+            colorscale = 'Viridis',
+            cmin = min_max[1], # minimum value for color scale
+            cmax = min_max[2],  # maximum value for color scale
+            colorbar = list(title = "avg_expr"),
+            zauto = FALSE 
+          )
         ) %>%
           layout(
-            xaxis = list(title = input$split, tickangle = 45),
-            yaxis = list(title = input$group)
+            xaxis = list(title = input$group, tickangle = 45),
+            yaxis = list(title = "Gene")
           )
         
         annotations[[i]] <- list(
-          x = ifelse(i %% 2 == 0, 0.8, 0.2),
-          y = get_y_coords_auto(i, n_cols, n_genes),
-          text = genes[i],
+          x = 0.1,
+          y = get_y_coords_auto(i, n_cols, n_split),
+          text = unique(list_of_dfs[[i]][[split_var]]), # split value
           xref = "paper",
           yref = "paper",
           xanchor = "center",
@@ -1072,6 +1109,7 @@ server <- function(input, output, session) {
   # === VIOLIN PLOT SECTION END ===
   
   # === HEATMAP SECTION START ===
+  # Function to min-max scale the values in the heatmap
   min_max_normalization <- function(x, min_value = -1, max_value = 1) {
     min_x <- min(x)
     max_x <- max(x)
@@ -1202,6 +1240,9 @@ server <- function(input, output, session) {
     available_genes <- intersect(selected_genes, colnames(pb_mat))
     group_by_var = input$group
     
+    print("pb_mat")
+    print(pb_mat)
+    
     # Subset matrix for selected genes
     heatmap_data <- pb_mat[, available_genes, drop = FALSE]
     
@@ -1225,15 +1266,26 @@ server <- function(input, output, session) {
     
     # Convert to long format for plotly
     # Create a data frame with proper factor levels to preserve names
-    heatmap_df <- data.frame(
+    heatmap_df <- data.table(
       Group = rep(rownames(heatmap_data), each = ncol(heatmap_data)),
       Gene = rep(colnames(heatmap_data), times = nrow(heatmap_data)),
       Expression = as.vector(heatmap_data)
     )
     
+    # Need to min-max scale the values in the pseudobulk heatmap (-1 to 1)
+    # This code performs the normalization on a data frame instead of a matrix
+    group_stats <- heatmap_df[, .(
+      min_expr = min(Expression, na.rm = TRUE), 
+      max_expr = max(Expression, na.rm = TRUE)
+    ), by = Gene]
+    
+    min_value = -1; max_value = 1
+    heatmap_with_stats_df = merge(heatmap_df, group_stats, by = "Gene")    
+    heatmap_with_stats_df[, normalized_expr := (Expression - min_expr) / (max_expr - min_expr) * (max_value - min_value) + min_value]
+    
     # Ensure Group and Gene columns are character (not numeric)
-    heatmap_df$Group <- as.character(heatmap_df$Group)
-    heatmap_df$Gene <- as.character(heatmap_df$Gene)
+    heatmap_with_stats_df$Group <- as.character(heatmap_with_stats_df$Group)
+    heatmap_with_stats_df$Gene <- as.character(heatmap_with_stats_df$Gene)
     
     cat("Heatmap data frame dimensions:", nrow(heatmap_df), "observations\n")
     cat("Sample groups:", paste(unique(heatmap_df$Group), collapse = ", "), "\n")
@@ -1243,10 +1295,10 @@ server <- function(input, output, session) {
     if (group_by_var == "None") {
       # Individual cell heatmap
       plotly_heatmap <- plot_ly(
-        data = heatmap_df,
+        data = heatmap_with_stats_df,
         x = ~Group,
         y = ~Gene,
-        z = ~Expression,
+        z = ~normalized_expr,
         type = "heatmap",
         colors = colorRamp(c("violet", "black", "yellow")),
         showscale = TRUE,
@@ -1278,10 +1330,10 @@ server <- function(input, output, session) {
     } else {
       # Grouped pseudobulk heatmap
       plotly_heatmap <- plot_ly(
-        data = heatmap_df,
+        data = heatmap_with_stats_df,
         x = ~Group,
         y = ~Gene,
-        z = ~Expression,
+        z = ~normalized_expr,
         type = "heatmap",
         colors = colorRamp(c("violet", "black", "yellow")),
         showscale = TRUE,
@@ -1326,7 +1378,7 @@ server <- function(input, output, session) {
   
   # This box plots takes pseudobulked data instead of the plot data
   output$boxPlot <- renderPlotly({
-    req(input$genes, input$group, pseudobulk_data())
+    req(input$genes, input$group, plot_data())
     print("plot_data class")
     print(class(plot_data()))
     print(plot_data())
@@ -1335,17 +1387,18 @@ server <- function(input, output, session) {
     # print("pseudobulk data")
     # print(pseudobulk_data())
     
-    pseudobulk_df <- as.data.frame(pseudobulk_data())
+    # pseudobulk_df <- as.data.frame(pseudobulk_data())
+    df <- as.data.frame(plot_data())
     
-    print("pseudobulk as data frame")
-    print(class(pseudobulk_df))
-    print(pseudobulk_df)
+    # print("pseudobulk as data frame")
+    # print(class(pseudobulk_df))
+    # print(pseudobulk_df)
     
     start_time = Sys.time()
     # For this boxplot, we need to pseudobulk the data first.
     # For pseudobulking there is a seurat function that does this well or you can make your own. Essentially it takes the individual cell ID columns form the expression matrix and the cell IDs as rows from the metadata file and averages the counts per biological replicate sample
     
-    df <- pseudobulk_df %>%
+    df <- df %>%
       pivot_longer(cols = all_of(input$genes), names_to="gene", values_to="expr")
     
     print("new df")
