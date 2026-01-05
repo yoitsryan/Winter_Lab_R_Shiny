@@ -147,7 +147,8 @@ server <- function(input, output, session) {
   })
   
   pseudobulk_data = reactive({
-    req(input$expr, input$meta)
+    req(input$expr, input$meta, input$genes)
+    shiny::validate(shiny::need(length(input$genes) > 1, "Must select more than one gene for pseudo-bulking"))
     
     expr = expr_dt_full()
     meta = meta_dt_full()
@@ -161,11 +162,17 @@ server <- function(input, output, session) {
     cat("Metadata:", nrow(meta), "cells x", ncol(meta), "variables\n")
     
     # Convert to data.frame for easier handling
-    expr_df <- as.data.frame(expr)
-    meta_df <- as.data.frame(meta)
+    # expr_df <- as.data.frame(expr)
+    # meta_df <- as.data.frame(meta)
+    
+    # Why not filter the data down to just the genes you've selected? No need to process the entire matrix at once.
+    expr_df <- expr[genes %in% input$genes]
+    meta_df <- meta
+    # browser()
     
     # Melt expression data to long format
-    expr_long <- reshape2::melt(expr_df, id.vars = "genes", variable.name = "cell", value.name = "expression")
+    # Don't ude reshape2, use data.table
+    expr_long <- data.table::melt(expr_df, id.vars = "genes", variable.name = "cell", value.name = "expression")
     expr_long$cell <- trimws(as.character(expr_long$cell))
     
     # Merge with metadata
@@ -781,6 +788,10 @@ server <- function(input, output, session) {
     annotations <- list()
     n_cols = 1
     
+    # If there's 3 values or less in the group variable, bring the dots closer together.
+    n_groups <- dplyr::n_distinct(summary_df[[group_var]])
+    x_domain <- if (n_groups <= 3) c(0.20, 0.80) else c(0, 1)
+    
     if (is.null(split_var)) {
       # No split_var included
       subplots[[1]] <- plot_ly(
@@ -804,7 +815,11 @@ server <- function(input, output, session) {
         colors = viridis::viridis_pal()(100)
       ) %>%
         layout(
-          xaxis = list(title = input$group),
+          xaxis = list(
+            title = input$group,
+            type = "category",
+            domain = x_domain
+          ),
           yaxis = list(title = "Gene")
         )
     } else {
@@ -825,6 +840,16 @@ server <- function(input, output, session) {
       # print("list_of_dfs")
       # print(list_of_dfs)
       # browser()
+      
+      # Color bar object. If we don't have this, the color bar will span the entire height of the plot.
+      cb <- list(
+        title = "avg_expr",
+        lenmode = "fraction",
+        len = 0.45,      # 45% of the subplot height
+        y = 0.5,
+        yanchor = "middle"
+      )
+      
       for (i in seq_along(list_of_dfs)) {
         subplots[[i]] <- plot_ly(
           data = list_of_dfs[[i]],
@@ -841,14 +866,19 @@ server <- function(input, output, session) {
           marker = list(
             color = ~avg_expr,
             colorscale = 'Viridis',
-            cmin = min_max[1], # minimum value for color scale
-            cmax = min_max[2],  # maximum value for color scale
-            colorbar = list(title = "avg_expr"),
-            zauto = FALSE 
+            cmin = min_max[1],
+            cmax = min_max[2],
+            colorbar = cb,
+            zauto = FALSE
           )
         ) %>%
           layout(
-            xaxis = list(title = input$group, tickangle = 45),
+            xaxis = list(
+              title = input$group,
+              tickangle = 45,
+              type = "category",
+              domain = x_domain
+            ),
             yaxis = list(title = "Gene")
           )
         
@@ -857,7 +887,7 @@ server <- function(input, output, session) {
           y = get_y_coords_auto(i, n_cols, n_split),
           text = unique(list_of_dfs[[i]][[split_var]]), # split value
           xref = "paper",
-          yref = "paper",
+          yref = "paper", 
           xanchor = "center",
           yanchor = "bottom",
           showarrow = FALSE
@@ -1237,14 +1267,17 @@ server <- function(input, output, session) {
   output$PBHeatmapPlot <- renderPlotly({
     pb_mat = pseudobulk_data()
     selected_genes <- input$genes
-    available_genes <- intersect(selected_genes, colnames(pb_mat))
+    # available_genes <- intersect(selected_genes, colnames(pb_mat))
     group_by_var = input$group
     
     print("pb_mat")
     print(pb_mat)
     
     # Subset matrix for selected genes
-    heatmap_data <- pb_mat[, available_genes, drop = FALSE]
+    # heatmap_data <- pb_mat[, available_genes, drop = FALSE]
+    
+    # Actually, the data was subsetted in the pseudobulk_data() reactive
+    heatmap_data <- pb_mat
     
     cat("Heatmap data:", nrow(heatmap_data), "groups x", ncol(heatmap_data), "genes\n")
     cat("Expression range:", round(min(heatmap_data), 3), "to", round(max(heatmap_data), 3), "\n")
@@ -1281,7 +1314,7 @@ server <- function(input, output, session) {
     
     min_value = -1; max_value = 1
     heatmap_with_stats_df = merge(heatmap_df, group_stats, by = "Gene")    
-    heatmap_with_stats_df[, normalized_expr := (Expression - min_expr) / (max_expr - min_expr) * (max_value - min_value) + min_value]
+    heatmap_with_stats_df[min_expr != max_expr, normalized_expr := (Expression - min_expr) / (max_expr - min_expr) * (max_value - min_value) + min_value]
     
     # Ensure Group and Gene columns are character (not numeric)
     heatmap_with_stats_df$Group <- as.character(heatmap_with_stats_df$Group)
@@ -1377,18 +1410,17 @@ server <- function(input, output, session) {
   })
   
   # This box plots takes pseudobulked data instead of the plot data
+  # Actually, it can't. Pseudobulking computes single aggregated values for each group-variable and gene. I can't plot single data points in boxplots.
   output$boxPlot <- renderPlotly({
     req(input$genes, input$group, plot_data())
+    req(input$group != "None")
     print("plot_data class")
     print(class(plot_data()))
     print(plot_data())
-    print("pseudobulk_data class")
-    print(class(pseudobulk_data()))
-    # print("pseudobulk data")
-    # print(pseudobulk_data())
     
+    # Actually, do not concert this to a data.frame. That's too time-consuming!
     # pseudobulk_df <- as.data.frame(pseudobulk_data())
-    df <- as.data.frame(plot_data())
+    # df <- as.data.frame(plot_data())
     
     # print("pseudobulk as data frame")
     # print(class(pseudobulk_df))
@@ -1398,8 +1430,22 @@ server <- function(input, output, session) {
     # For this boxplot, we need to pseudobulk the data first.
     # For pseudobulking there is a seurat function that does this well or you can make your own. Essentially it takes the individual cell ID columns form the expression matrix and the cell IDs as rows from the metadata file and averages the counts per biological replicate sample
     
-    df <- df %>%
-      pivot_longer(cols = all_of(input$genes), names_to="gene", values_to="expr")
+    # df <- df %>%
+    #   pivot_longer(cols = all_of(input$genes), names_to="gene", values_to="expr")
+    
+    # This code should be written in data.table, not dplyr.
+    if (!is.null(input$split) && input$split != "None") {
+      gene_df = plot_data() %>% select(all_of(input$genes), input$split, input$group) %>% as.data.table()  
+    } else {
+      gene_df = plot_data() %>% select(all_of(input$genes), input$group) %>% as.data.table()  
+    }
+    
+    df <- data.table::melt(
+      gene_df, # Only melt the genes that are selected. That will speed up runtime.
+      measure.vars = input$genes,
+      variable.name = "gene",
+      value.name = "expr"
+    )
     
     print("new df")
     
