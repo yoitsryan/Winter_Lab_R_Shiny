@@ -106,7 +106,7 @@ ui <- fluidPage(
         # tabPanel("Feature Plot", withSpinner(plotlyOutput("featPlot", height = "900px"), type = 6)),
         # Separate the feature plot and split-plots
         tabPanel("Feature Plot", 
-                 withSpinner(plotlyOutput("featPlot"), type = 6),
+                 uiOutput("feat_plot_ui"),
                  uiOutput("split_plot_ui")
         ),
         tabPanel("Bubble Plot",  withSpinner(uiOutput("dotPlot_ui"), type = 6)),
@@ -130,6 +130,12 @@ server <- function(input, output, session) {
     print("Checkpoint 1: plot_data")
     
     start_time <- Sys.time()
+    progress <- shiny::Progress$new()
+    # Make sure it closes when we exit this reactive, even if there's an error
+    on.exit(progress$close())
+    progress$set(message = "Preparing Expression Matrix", value = 0)
+    
+    progress$set(detail = "Transposing Expression Matrix", value = 0.45)
     
     # Transpose using data.table - this is the fastest method
     # keep.names creates a new column with the original column names
@@ -137,13 +143,18 @@ server <- function(input, output, session) {
     transposed_dt <- transpose(expr_dt_full(), keep.names = "cell", make.names = 'genes') 
     setkey(transposed_dt, cell)
     
+    progress$set(detail = "Merging with Meta", value = 0.80)
     result <- transposed_dt[meta_dt_full(), nomatch = 0L]
     
     end_time <- Sys.time()
     print(paste("Time taken:", end_time - start_time))
     
     # Convert to data.frame if your downstream code requires it
+    progress$set(detail = "Converting to data.frame", value = 0.95)
     result <- as.data.frame(result)
+    
+    progress$set(detail = "Done!", value = 1)
+    return(result)
   })
   
   pseudobulk_data = reactive({
@@ -280,6 +291,7 @@ server <- function(input, output, session) {
     req(input$expr)
     start_time = Sys.time()
     print("Checkpoint 2: expr_dt_full")
+    showNotification("Reading expression matrix...")
     dt <- fread(input$expr$datapath, encoding = "UTF-8", nThread = parallel::detectCores())
     setnames(dt, 1, "genes")
     dt[, genes := toupper(trimws(genes))]
@@ -294,11 +306,17 @@ server <- function(input, output, session) {
   
   meta_dt_full <- reactive({
     req(input$meta)
+    start_time = Sys.time()
     print("Checkpoint 3: meta_dt_full")
+    showNotification("Reading metadata file...")
     meta_dt <- fread(input$meta$datapath, data.table = TRUE)
     setnames(meta_dt, 1, "cell")
     meta_dt[, cell := trimws(as.character(cell))]
     setkey(meta_dt, cell)
+    end_time = Sys.time()
+    total_time = end_time - start_time
+    print("Checkpoint 3 time")
+    print(total_time)
     meta_dt
   })
   
@@ -430,10 +448,17 @@ server <- function(input, output, session) {
         type = "scatter",
         mode = "markers",
         marker = list(size = 4, opacity = 0.8)
-      ) %>%
+      ) %>% 
         layout(
           title = "UMAP Colored by Metadata Group",
-          legend = list(title = list(text = group_col))
+          legend = list(title = list(text = group_col)),
+          xaxis = list(
+            scaleanchor = "y",  # lock x to y
+            scaleratio  = 1
+          ),
+          yaxis = list(
+            constrain = "domain"
+          )
         )
     }
     
@@ -441,14 +466,25 @@ server <- function(input, output, session) {
     # Bottom panel: split-feature UMAP
     # --------------------------
     split_plotly <- NULL
-    if (!is.null(input$genes) && length(input$genes) > 0 && input$split != "None") {
-      df_long <- df %>%
-        select(UMAP_Xaxis, UMAP_Yaxis, cell, all_of(group_col), all_of(split_col), all_of(input$genes)) %>%
-        pivot_longer(
-          cols = all_of(input$genes),
-          names_to = "gene",
-          values_to = "expression"
-        )
+    if (!is.null(input$genes) && length(input$genes) > 0) {
+      if (input$split != "None") {
+        if (group_col != "None") {
+          df_long <- df %>%
+            select(UMAP_Xaxis, UMAP_Yaxis, cell, all_of(group_col), all_of(split_col), all_of(input$genes)) %>%
+            pivot_longer(
+              cols = all_of(input$genes),
+              names_to = "gene",
+              values_to = "expression"
+            )
+        } else {
+          df_long <- df %>%
+            select(UMAP_Xaxis, UMAP_Yaxis, cell, all_of(split_col), all_of(input$genes)) %>%
+            pivot_longer(
+              cols = all_of(input$genes),
+              names_to = "gene",
+              values_to = "expression"
+            )
+        }
       
       # Background points
       df_bg <- df_long %>%
@@ -467,7 +503,7 @@ server <- function(input, output, session) {
       df_long <- left_join(df_long, summary_split, by = c("gene", split_col))
       df_long$hover_text_split <- paste0(
         "<b>Cell:</b> ", df_long$cell, "<br>",
-        "<b>Group:</b> ", df_long[[group_col]], "<br>",
+        if (group_col != "None") paste0("<b>Group:</b> ", df_long[[group_col]], "<br>") else "",
         "<b>", split_col, ":</b> ", df_long[[split_col]], "<br>",
         "<b>Gene:</b> ", df_long$gene, "<br>",
         "<b>Expression (this cell):</b> ", round(df_long$expression,2), "<br>",
@@ -587,26 +623,14 @@ server <- function(input, output, session) {
           ))
         }
         
-        # Row labels (split values)
+        # Row labels (split values) — position to the left of the plots
         for (i in seq_along(facet_rows)) {
           annotations <- c(annotations, list(
-            list(x = -0.02, y = 1 - (i - 0.5)/n_splits, text = facet_rows[i],
+            list(x = -0.06, y = 1 - (i - 0.5)/n_splits, text = facet_rows[i],
                  xref = "paper", yref = "paper", showarrow = FALSE,
+                 xanchor = "right", yanchor = "middle",
                  font = list(size = 12, face = "bold"))
           ))
-          # annotations <- c(annotations, list(
-          #   list(
-          #     x = -0.06,   # a bit outside the plots; adjust as needed
-          #     y = 1 - (i - 0.5)/n_splits,
-          #     text = facet_rows[i],
-          #     xref = "paper", yref = "paper",
-          #     showarrow = FALSE,
-          #     textangle = -90,       # rotate text
-          #     xanchor = "center",    # keep centered after rotation
-          #     yanchor = "middle",
-          #     font = list(size = 12, face = "bold")
-          #   )
-          # ))
         }
         
         split_plotly <- split_plotly %>% layout(annotations = annotations)
@@ -614,6 +638,10 @@ server <- function(input, output, session) {
         # --------------------------
         # Combine with top panel
         # --------------------------
+        # Reduce margins on individual plots to minimize gap; extra left margin for row labels
+        meta_plotly <- meta_plotly %>% layout(margin = list(b = 10, t = 10, l = 50, r = 20))
+        split_plotly <- split_plotly %>% layout(margin = list(t = 10, b = 20, l = 90, r = 20))
+        
         combined_plot <- subplot(
           meta_plotly, split_plotly,
           nrows = 2, heights = c(0.3, 0.7),
@@ -623,6 +651,144 @@ server <- function(input, output, session) {
         
       } else {
         combined_plot <- meta_plotly
+      }
+      
+      } else {
+        # Case 2: No split-by variable, but genes are selected - create single row of subplots (one per gene)
+        if (group_col != "None") {
+          df_long <- df %>%
+            select(UMAP_Xaxis, UMAP_Yaxis, cell, all_of(group_col), all_of(input$genes)) %>%
+            pivot_longer(
+              cols = all_of(input$genes),
+              names_to = "gene",
+              values_to = "expression"
+            )
+        } else {
+          df_long <- df %>%
+            select(UMAP_Xaxis, UMAP_Yaxis, cell, all_of(input$genes)) %>%
+            pivot_longer(
+              cols = all_of(input$genes),
+              names_to = "gene",
+              values_to = "expression"
+            )
+        }
+        
+        # Hover text for gene panels
+        summary_gene <- df_long %>%
+          group_by(gene) %>%
+          summarise(
+            avg_expr_gene = mean(expression, na.rm = TRUE),
+            pct_expr_gene = 100 * sum(expression > 0, na.rm = TRUE)/n(),
+            .groups = "drop"
+          )
+        
+        df_long <- left_join(df_long, summary_gene, by = "gene")
+        df_long$hover_text_gene <- paste0(
+          "<b>Cell:</b> ", df_long$cell, "<br>",
+          if (group_col != "None") paste0("<b>Group:</b> ", df_long[[group_col]], "<br>") else "",
+          "<b>Gene:</b> ", df_long$gene, "<br>",
+          "<b>Expression (this cell):</b> ", round(df_long$expression,2), "<br>",
+          "<b>Avg. Expr (this panel):</b> ", round(df_long$avg_expr_gene,2), "<br>",
+          "<b>% Expressing (this panel):</b> ", round(df_long$pct_expr_gene,1), "%"
+        )
+        
+        facet_cols <- unique(df_long$gene)
+        split_subplots <- list()
+        
+        # --------------------------
+        # Create subplots (one per gene, single row)
+        # --------------------------
+        for (g in facet_cols) {
+          # Filter to cells expressing this gene
+          fg_points <- df_long %>% filter(gene == g, expression > 0)
+          
+          traces <- list()
+          
+          # Interactive subplots showing only expressing cells
+          if (nrow(fg_points) > 0) {
+            traces[[1]] <- plot_ly(
+              data = fg_points,
+              x = ~UMAP_Xaxis,
+              y = ~UMAP_Yaxis,
+              type = "scatter",
+              mode = "markers",
+              marker = list(
+                size = 4,
+                color = ~expression,
+                colorscale = c("lightgrey","darkviolet"),
+                showscale = (g == facet_cols[1]), # only first plot
+                colorbar = list(
+                  thickness = 15,
+                  len = 0.5,
+                  y = 0.5,
+                  title = list(text = "Expr")
+                )
+              ),
+              text = ~hover_text_gene,
+              hoverinfo = "text",
+              showlegend = FALSE
+            ) %>%
+              layout(
+                xaxis = list(scaleanchor = "y", scaleratio = 1),
+                yaxis = list(constrain = "domain")
+              )
+          }
+          
+          valid_traces <- traces[!sapply(traces, is.null)]
+          if (length(valid_traces) > 0) {
+            split_subplots[[g]] <- subplot(valid_traces, shareX = TRUE, shareY = TRUE)
+          } else {
+            split_subplots[[g]] <- NULL
+          }
+        }
+        
+        valid_cols <- split_subplots[!sapply(split_subplots, is.null)]
+        if (length(valid_cols) > 0) {
+          # Keep the plots as square as possible (not squished)
+          base_size <- 250
+          split_plotly <- subplot(valid_cols, nrows = 1) %>%
+            layout(
+              autosize = FALSE,
+              width  = base_size * length(facet_cols),
+              height = base_size,  # Single row
+              xaxis = list(scaleanchor = "y"),
+              yaxis = list(constrain = "domain", scaleratio = 1)
+            )
+          
+          # --------------------------
+          # Add facet labels (gene names as column headers)
+          # --------------------------
+          annotations <- list()
+          n_genes <- length(valid_cols)
+          
+          # Column labels (genes)
+          for (i in seq_along(facet_cols)) {
+            annotations <- c(annotations, list(
+              list(x = (i - 0.5)/n_genes, y = 1.02, text = facet_cols[i],
+                   xref = "paper", yref = "paper", showarrow = FALSE,
+                   font = list(size = 12, face = "bold"))
+            ))
+          }
+          
+          split_plotly <- split_plotly %>% layout(annotations = annotations)
+          
+          # --------------------------
+          # Combine with top panel
+          # --------------------------
+          # Reduce margins on individual plots to minimize gap
+          meta_plotly <- meta_plotly %>% layout(margin = list(b = 10, t = 50, l = 50, r = 20))
+          split_plotly <- split_plotly %>% layout(margin = list(t = 10, b = 20, l = 50, r = 20))
+          
+          combined_plot <- subplot(
+            meta_plotly, split_plotly,
+            nrows = 2, heights = c(0.3, 0.7),
+            shareX = FALSE, shareY = FALSE,
+            titleY = TRUE
+          )
+          
+        } else {
+          combined_plot <- meta_plotly
+        }
       }
       
     } else {
@@ -648,8 +814,18 @@ server <- function(input, output, session) {
     # return(plot_gg)
   })
   
+  output$feat_plot_ui <- renderUI({
+    tags$div(
+      style = "
+      width: 100%;
+      aspect-ratio: 1 / 1;
+    ",
+      plotlyOutput("featPlot", height = "60%", width = "60%")
+    )
+  })
+  
   output$splitPlot <- renderPlotly({
-    req(input$split)
+    req(input$genes, length(input$genes) > 0) # Require genes instead of split
     plot_gg <- feature_plotly_object()[[2]]
     print("Checkpoint 16A: output$splitPlot")
     req(plot_gg)
@@ -661,7 +837,7 @@ server <- function(input, output, session) {
   # Dynamically change the size of the panel based on how many split plots are made.
   # We don't want the plots to get "squished" horizontally.
   output$split_plot_ui <- renderUI({
-    req(input$split) # this menu won't even appear until expression matrix and metadata are selected
+    req(input$genes, length(input$genes) > 0) # Show split plot UI when genes are selected
     n_pixels_per_plot <- 200
     withSpinner(plotlyOutput("splitPlot", height = n_unique_splits() * n_pixels_per_plot), type = 6)    
   })
@@ -669,7 +845,12 @@ server <- function(input, output, session) {
   
   # Calculate the number of rows in the bottom panel of the feature plot (split plots)
   n_unique_splits <- reactive({
-    length(unique(plot_data()[[input$split]]))
+    if (is.null(input$split) || input$split == "None") {
+      # When no split-by variable, we have a single row of gene subplots
+      return(1)
+    } else {
+      return(length(unique(plot_data()[[input$split]])))
+    }
   })
   
   # --- NEW: Download Handlers ---
