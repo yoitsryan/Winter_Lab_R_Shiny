@@ -1191,6 +1191,9 @@ server <- function(input, output, session) {
         df_big[, split := NULL]
       }
       
+      # Ensure a consistent gene column name for downstream plotting
+      df_big[, gene := genes]
+      
       if (nrow(df_big) == 0) {
         showNotification("No groups have ≥2 cells after filtering. Try different settings.", type = "error")
         return(NULL)
@@ -1210,20 +1213,21 @@ server <- function(input, output, session) {
     print(df_big)
     start_time = Sys.time()
     # Build plot
-    genes <- unique(df_big$gene)
-    print("genes")
-    print(genes)
-    n_genes <- length(genes)
+    # Preserve the order of the user's gene selection
+    selected_genes <- toupper(trimws(input$genes))
+    print("selected_genes")
+    print(selected_genes)
+    n_genes <- length(selected_genes)
     
     # Create subplots
     subplots <- list()
     annotations <- list()
     # n_cols <- 2
     n_cols <- 1
-    for (i in seq_along(genes)) {
+    for (i in seq_along(selected_genes)) {
       print(paste0("genes[", i, "]"))
-      print(genes[i])
-      gene_data <- df_big[df_big$gene == genes[i], ]
+      print(selected_genes[i])
+      gene_data <- df_big[df_big$genes == selected_genes[i], ]
       print("gene_data")
       print(gene_data)
       # browser()
@@ -1291,7 +1295,7 @@ server <- function(input, output, session) {
         # x = ifelse(i %% 2 == 0, 0.8, 0.2),
         x = 0.5,
         y = get_y_coords_auto(i, n_cols, n_genes),
-        text = genes[i],
+        text = selected_genes[i],
         xref = "paper",
         yref = "paper",
         xanchor = "center",  
@@ -1300,9 +1304,9 @@ server <- function(input, output, session) {
       )
     }
     
-    # Create subplot with proper layout
+    # Create subplot with proper layout (independent zoom per subplot)
     final_plot <- subplot(subplots, nrows = ceiling(n_genes / n_cols), 
-                          shareY = FALSE, shareX = TRUE, 
+                          shareY = FALSE, shareX = FALSE, 
                           titleX = FALSE, titleY = TRUE) %>%
       layout(
         annotations = annotations,
