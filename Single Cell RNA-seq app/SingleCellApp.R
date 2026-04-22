@@ -168,6 +168,8 @@ server <- function(input, output, session) {
     setnames(expr, 1, "genes")
     setnames(meta, 1, "cell")
     expr[, genes := toupper(trimws(genes))]
+    # Normalize user-selected gene names once so filtering is case-insensitive and stable.
+    selected_genes <- toupper(trimws(input$genes))
     
     cat("Expression data:", nrow(expr), "genes x", ncol(expr)-1, "cells\n")
     cat("Metadata:", nrow(meta), "cells x", ncol(meta), "variables\n")
@@ -177,7 +179,7 @@ server <- function(input, output, session) {
     # meta_df <- as.data.frame(meta)
     
     # Why not filter the data down to just the genes you've selected? No need to process the entire matrix at once.
-    expr_df <- expr[genes %in% input$genes]
+    expr_df <- expr[genes %in% selected_genes]
     meta_df <- meta
     # browser()
     
@@ -236,6 +238,12 @@ server <- function(input, output, session) {
       
       # Extract pseudobulk matrix and transpose
       pb_mat <- t(pb$RNA)
+      
+      # Convert summed pseudobulk counts to per-group averages (mean expression per cell).
+      group_cell_counts <- table(meta_seurat_subset[[group_by_var]])
+      common_groups <- intersect(rownames(pb_mat), names(group_cell_counts))
+      pb_mat <- pb_mat[common_groups, , drop = FALSE]
+      pb_mat <- pb_mat / as.numeric(group_cell_counts[common_groups])
       
       # # Debug: Check what Seurat returned
       # cat("Raw Seurat output - pb$RNA dimensions:", nrow(pb$RNA), "x", ncol(pb$RNA), "\n")
@@ -596,13 +604,25 @@ server <- function(input, output, session) {
       if (length(valid_cols) > 0) {
         # split_plotly <- subplot(valid_cols, nrows = 1, shareX = FALSE, shareY = FALSE)
         
-        # Keep the plots as square as possible (not squished)
+        # Reserve dynamic left margin so split-row labels are fully visible.
+        split_labels <- as.character(facet_rows)
+        max_split_label_chars <- if (length(split_labels) > 0) max(nchar(split_labels), na.rm = TRUE) else 0
+        left_margin_px <- max(120, 12 * max_split_label_chars + 30)
+        # Move labels further left as labels get longer, while keeping them in a reasonable range.
+        split_label_x <- -min(0.28, 0.06 + 0.006 * max_split_label_chars)
+        
+        # Keep each subplot square by sizing the full widget from the desired panel size + margins.
         base_size <- 250
+        right_margin_px <- 20
+        top_margin_px <- 10
+        bottom_margin_px <- 20
+        total_width_px <- base_size * length(facet_cols) + left_margin_px + right_margin_px
+        total_height_px <- base_size * length(facet_rows) + top_margin_px + bottom_margin_px
         split_plotly <- subplot(valid_cols, nrows = 1) %>%
           layout(
             autosize = FALSE,
-            width  = base_size * length(facet_cols),
-            height = base_size * length(facet_rows),
+            width  = total_width_px,
+            height = total_height_px,
             xaxis = list(scaleanchor = "y"),
             yaxis = list(constrain = "domain", scaleratio = 1)
           )
@@ -626,7 +646,7 @@ server <- function(input, output, session) {
         # Row labels (split values) — position to the left of the plots
         for (i in seq_along(facet_rows)) {
           annotations <- c(annotations, list(
-            list(x = -0.06, y = 1 - (i - 0.5)/n_splits, text = facet_rows[i],
+            list(x = split_label_x, y = 1 - (i - 0.5)/n_splits, text = facet_rows[i],
                  xref = "paper", yref = "paper", showarrow = FALSE,
                  xanchor = "right", yanchor = "middle",
                  font = list(size = 12, face = "bold"))
@@ -638,9 +658,9 @@ server <- function(input, output, session) {
         # --------------------------
         # Combine with top panel
         # --------------------------
-        # Reduce margins on individual plots to minimize gap; extra left margin for row labels
+        # Reduce margins on individual plots; allocate left padding for row labels.
         meta_plotly <- meta_plotly %>% layout(margin = list(b = 10, t = 10, l = 50, r = 20))
-        split_plotly <- split_plotly %>% layout(margin = list(t = 10, b = 20, l = 90, r = 20))
+        split_plotly <- split_plotly %>% layout(margin = list(t = top_margin_px, b = bottom_margin_px, l = left_margin_px, r = right_margin_px))
         
         combined_plot <- subplot(
           meta_plotly, split_plotly,
@@ -985,6 +1005,7 @@ server <- function(input, output, session) {
         hoverinfo = "text",
         type = "scatter",
         mode = "markers",
+        showlegend = FALSE,
         marker = list(
           sizemode = "diameter",
           sizeref = 2,
@@ -1044,6 +1065,7 @@ server <- function(input, output, session) {
           hoverinfo = "text",
           type = "scatter",
           mode = 'markers',
+          showlegend = FALSE,
           marker = list(
             color = ~avg_expr,
             colorscale = 'Viridis',
@@ -1485,8 +1507,9 @@ server <- function(input, output, session) {
     # Convert to long format for plotly
     # Create a data frame with proper factor levels to preserve names
     heatmap_df <- data.table(
-      Group = rep(rownames(heatmap_data), each = ncol(heatmap_data)),
-      Gene = rep(colnames(heatmap_data), times = nrow(heatmap_data)),
+      # Keep Group/Gene indexing aligned with column-major matrix vectorization.
+      Group = rep(rownames(heatmap_data), times = ncol(heatmap_data)),
+      Gene = rep(colnames(heatmap_data), each = nrow(heatmap_data)),
       Expression = as.vector(heatmap_data)
     )
     
@@ -1500,6 +1523,8 @@ server <- function(input, output, session) {
     min_value = -1; max_value = 1
     heatmap_with_stats_df = merge(heatmap_df, group_stats, by = "Gene")    
     heatmap_with_stats_df[min_expr != max_expr, normalized_expr := (Expression - min_expr) / (max_expr - min_expr) * (max_value - min_value) + min_value]
+    # Handle constant genes explicitly so they plot as neutral expression instead of NA.
+    heatmap_with_stats_df[min_expr == max_expr, normalized_expr := 0]
     
     # Ensure Group and Gene columns are character (not numeric)
     heatmap_with_stats_df$Group <- as.character(heatmap_with_stats_df$Group)
